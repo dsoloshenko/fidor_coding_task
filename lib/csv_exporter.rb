@@ -128,7 +128,7 @@ class CsvExporter
       when 'AccountTransfer' then add_account_transfer(row, validation_only)
       when 'BankTransfer' then add_bank_transfer(row, validation_only)
       when 'Lastschrift' then add_dta_row(dtaus, row, validation_only)
-      else errors << "#{row['ACTIVITY_ID']}: Transaction type not found"
+      else add_error("#{row['ACTIVITY_ID']}: Transaction type not found")
     end
 
     [errors, dtaus]
@@ -181,13 +181,13 @@ class CsvExporter
     sender
   end
 
-  def self.account_transfer(row, validation_only)
+  def self.account_transfer(row)
     sender = get_sender(row)
     return @errors.last unless sender
     @account_transfer ||= if row.depot_activity_id.blank?
                             build_account_transfer(row)
                           else
-                            find_account_transfer
+                            find_account_transfer(row)
                           end
   end
 
@@ -201,7 +201,7 @@ class CsvExporter
     )
   end
 
-  def find_account_transfer
+  def self.find_account_transfer(row)
     account_transfer = sender.credit_account_transfers.find_by_id(row['DEPOT_ACTIVITY_ID'])
     if account_transfer.nil?
       add_error("#{row['ACTIVITY_ID']}: AccountTransfer not found")
@@ -212,6 +212,10 @@ class CsvExporter
     else
       account_transfer.subject = import_subject(row)
     end
+    account_transfer_valid(account_transfer, row)
+  end
+
+  def self.account_transfer_valid(account_transfer, row)
     if account_transfer && !account_transfer.valid?
       add_error("#{row['ACTIVITY_ID']}: AccountTransfer validation error(s): #{account_transfer.errors.full_messages.join('; ')}")
     elsif !validation_only
