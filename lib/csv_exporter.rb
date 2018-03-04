@@ -21,7 +21,7 @@ class CsvExporter
     @sftp_user = "some-ftp-user"
     @path_to_credentials = "path-to-credentials"
     @errors = []
-    @import_result = {:error_file => [], :errors => [], success => []}
+    @import_result = { error_file: [], errors: [], success: []}
   end
 
   cattr_accessor :import_retry_count
@@ -97,15 +97,15 @@ class CsvExporter
   def self.import_file(file, validation_only = false)
     @errors = []
     line = 2
-    source_path = "#{Rails.root.to_s}/private/upload"
+    source_path = "#{UPLOAD_PATH}"
     path_and_name = "#{source_path}/csv/tmp_mraba/DTAUS#{Time.now.strftime('%Y%m%d_%H%M%S')}"
 
-    FileUtils.mkdir_p "#{source_path}/csv"
     FileUtils.mkdir_p "#{source_path}/csv/tmp_mraba"
 
     @dtaus = Mraba::Transaction.define_dtaus('RS', 8888888888, 99999999, 'Credit collection')
     success_rows = []
-    import_rows = CSV.read(file, { :col_sep => ';', :headers => true, :skip_blanks => true } ).map{ |r| [r.to_hash['ACTIVITY_ID'], r.to_hash] }
+
+    import_rows = get_import_rows(file)
 
     import_rows.each do |index, row|
       next if index.blank?
@@ -116,11 +116,24 @@ class CsvExporter
       success_rows << row['ACTIVITY_ID']
     end
 
+    add_datei(validation_only, path_and_name)
+
+    {:success => success_rows, :errors => @errors}
+  end
+
+  def self.add_datei(validation_only, path_and_name)
     if @errors.empty? and !validation_only
       @dtaus.add_datei("#{path_and_name}_201_mraba.csv") unless @dtaus.is_empty?
     end
+  end
 
-    {:success => success_rows, :errors => @errors}
+  def self.get_import_rows(file)
+    CSV.read(
+      file,
+      col_sep: ';',
+      headers: true,
+      skip_blanks: true
+    ).map{ |r| [r.to_hash['ACTIVITY_ID'], r.to_hash] }
   end
 
   def self.import_file_row(row, validation_only, errors, dtaus)
