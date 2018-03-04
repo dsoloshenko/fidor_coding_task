@@ -148,22 +148,15 @@ class CsvExporter
   end
 
   def self.import_file_row_with_error_handling(row, validation_only, errors, dtaus)
-    error_text = nil
-    self.import_retry_count = 0
-    5.times do
-      self.import_retry_count += 1
-      error_text = nil
       begin
         import_file_row(row, validation_only, errors, dtaus)
         break
       rescue => e
-        error_text = "#{row['ACTIVITY_ID']}: #{e.to_s}"
+        add_error("Row ##{row.activity_id}: #{e.to_s}")
         break
       end
-    end
-    errors << error_text if error_text
 
-    [errors, dtaus]
+    [dtaus]
   end
 
   def self.validate_import_row?(row)
