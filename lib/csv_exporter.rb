@@ -181,29 +181,39 @@ class CsvExporter
     sender
   end
 
-
-  def self.add_account_transfer(row, validation_only)
+  def self.account_transfer(row, validation_only)
     sender = get_sender(row)
     return @errors.last unless sender
+    @account_transfer ||= if row.depot_activity_id.blank?
+                            build_account_transfer(row)
+                          else
+                            find_account_transfer
+                          end
+  end
 
-    if row['DEPOT_ACTIVITY_ID'].blank?
-      account_transfer = sender.credit_account_transfers.build(:amount => row['AMOUNT'].to_f, :subject => import_subject(row), :receiver_multi => row['RECEIVER_KONTO'])
-      account_transfer.date = row['ENTRY_DATE'].to_date
-      account_transfer.skip_mobile_tan = true
+  def self.build_account_transfer(row)
+    sender.credit_account_transfers.build(
+      amount: row['AMOUNT'].to_f,
+      subject: import_subject(row),
+      receiver_multi: row['RECEIVER_KONTO'],
+      date: row['ENTRY_DATE'].to_date,
+      skip_mobile_tan: true
+    )
+  end
+
+  def find_account_transfer
+    account_transfer = sender.credit_account_transfers.find_by_id(row['DEPOT_ACTIVITY_ID'])
+    if account_transfer.nil?
+      add_error("#{row['ACTIVITY_ID']}: AccountTransfer not found")
+      return
+    elsif account_transfer.state != 'pending'
+      add_error("#{row['ACTIVITY_ID']}: AccountTransfer state expected 'pending' but was '#{account_transfer.state}'")
+      return
     else
-      account_transfer = sender.credit_account_transfers.find_by_id(row['DEPOT_ACTIVITY_ID'])
-      if account_transfer.nil?
-        @errors << "#{row['ACTIVITY_ID']}: AccountTransfer not found"
-        return
-      elsif account_transfer.state != 'pending'
-        @errors << "#{row['ACTIVITY_ID']}: AccountTransfer state expected 'pending' but was '#{account_transfer.state}'"
-        return
-      else
-        account_transfer.subject = import_subject(row)
-      end
+      account_transfer.subject = import_subject(row)
     end
     if account_transfer && !account_transfer.valid?
-      @errors << "#{row['ACTIVITY_ID']}: AccountTransfer validation error(s): #{account_transfer.errors.full_messages.join('; ')}"
+      add_error("#{row['ACTIVITY_ID']}: AccountTransfer validation error(s): #{account_transfer.errors.full_messages.join('; ')}")
     elsif !validation_only
       row['DEPOT_ACTIVITY_ID'].blank? ? account_transfer.save! : account_transfer.complete_transfer!
     end
@@ -222,7 +232,7 @@ class CsvExporter
     )
 
     if !bank_transfer.valid?
-      @errors << "#{row['ACTIVITY_ID']}: BankTransfer validation error(s): #{bank_transfer.errors.full_messages.join('; ')}"
+      add_error("#{row['ACTIVITY_ID']}: BankTransfer validation error(s): #{bank_transfer.errors.full_messages.join('; ')}")
     elsif !validation_only
       bank_transfer.save!
     end
