@@ -1,3 +1,11 @@
+Refactoring ideas:
+
+1. If i will have more then 2 hours i'll devide the code on such modules: ftp_connect, csv_import, error_handling
+2. Importing from FTP better to implement with thereads
+3. Faster to send 1 email with success imported files and errors
+4. Service can be implemented as a gem
+
+
 Task
 =====
 
