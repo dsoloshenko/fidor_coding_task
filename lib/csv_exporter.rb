@@ -5,47 +5,62 @@ require 'csv'
 
 class CsvExporter
 
-  @sftp_server = Rails.env == 'production' ? 'csv.example.com/endpoint/' : '0.0.0.0:2020'
-  @errors = []
+  DOWNLOAD_PATH = "#{Rails.root.to_s}/private/data/download"
+  UPLOAD_PATH = "#{Rails.root.to_s}/private/data/upload"
+  REMOTE_PATH = '/data/files/csv'
+
+  cattr_accessor :import_retry_count
+
+  def initialize
+    # Can be created config where we can store such credentials or can store it as Envinroment variables - this is more secure way
+    @sftp_server = if Rails.env.production?
+                     'csv.example.com/endpoint/'
+                   else
+                     '0.0.0.0:2020'
+                   end
+    @sftp_user = "some-ftp-user"
+    @path_to_credentials = "path-to-credentials"
+    @errors = []
+    @import_result = {:error_file => [], :errors => [], success => []}
+  end
 
   cattr_accessor :import_retry_count
 
   def self.transfer_and_import(send_email = true)
-    FileUtils.mkdir_p "#{Rails.root.to_s}/private/data/download"
-
-    Net::SFTP.start(@sftp_server, "some-ftp-user", :keys => ["path-to-credentials"]) do |sftp|
-      sftp_entries = sftp.dir.entries("/data/files/csv").map{ |e| e.name }.sort
-
-      # Can be imported as multiple threads (need to read more about the threads)
-      sftp_entries.each do |entry|
-
-        # Should be filtered befor the loop i think
-        next unless entry[-4, 4] == '.csv'
-        next unless sftp.dir.entries("/data/files/csv").map{ |e| e.name }.include?(entry + '.start')
-
-        # Folders pathes we can use as constatnts
-        file_local = "#{Rails.root.to_s}/private/data/download/#{entry}"
-        file_remote = "/data/files/csv/#{entry}"
-
-        sftp.download!(file_remote, file_local)
-        sftp.remove!(file_remote + '.start')
-
-        result = import(file_local)
-
-       # Can be created an array of files and we will send only one email after the process done
-        if result == 'Success'
-          File.delete(file_local)
-          BackendMailer.send_import_feedback('Successful Import', "Import of the file #{entry} done.") if send_email
-        else
-          error_content = ["Import of the file #{entry} failed with errors:", result].join("\n")
-          upload_error_file(entry, error_content)
-          BackendMailer.send_import_feedback('Import CSV failed', error_content) if send_email
-          break
-        end
-      end
-    end
+    ftp_transfer(send_email)
   end
 
+  # Transfer csv filles from remote ftp server to local folder
+  def self.ftp_transfer(send_email)
+    FileUtils.mkdir_p UPLOAD_PATH
+    Net::SFTP.start(@sftp_server, @sftp_user, :keys => [@path_to_credentials]) do |sftp|
+      # get array of files
+      sftp_entries = sftp.dir.entries(REMOTE_PATH).select{ |item| csv_valid?(item) && array.include?(item + ".start")}.sort
+      sftp_entries.each do |entry|
+        # can be describer constants
+        file_local = "#{DOWNLOAD_PATH}/#{entry}"
+        file_remote = "#{REMOTE_PATH}/#{entry}"
+
+        sftp.download!(file_remote, file_local)
+        # remove only if download was successful
+        sftp.remove!(file_remote + '.start')
+        data_import(file_local, entry)
+      end
+    end
+    send_import_report(send_email)
+  end
+
+  def self.data_import(file_local, entry)
+    result = import(file_local)
+    if result == 'Success'
+      File.delete(file_local)
+      @import_result[:success] << entry
+    else
+      @import_result[:error_file] << entry
+      @import_result[:errors] << result
+      upload_error_file(entry, error_content)
+    end
+  end
 
   def self.import(file, validation_only = false)
     begin
@@ -221,14 +236,30 @@ class CsvExporter
   private
 
   def self.upload_error_file(entry, result)
-    FileUtils.mkdir_p "#{Rails.root.to_s}/private/data/upload"
-    error_file = "#{Rails.root.to_s}/private/data/upload/#{entry}"
+    error_file = "#{UPLOAD_PATH}/#{entry}"
     File.open(error_file, "w") do |f|
       f.write(result)
     end
-    Net::SFTP.start(@sftp_server, "some-ftp-user", :keys => ["path-to-credentials"]) do |sftp|
+    Net::SFTP.start(@sftp_server, @sftp_user, :keys => [@path_to_credentials]) do |sftp|
       sftp.upload!(error_file, "/data/files/batch_processed/#{entry}")
     end
+  end
+
+  def self.csv_valid?(file_name)
+    file_name[-4, 4] == ".csv"
+  end
+
+  def self.get_error_message_and_upload
+    error_messages = []
+    @import_result[:error_file].each do |file, index|
+      upload_error_file(file, @import_result[:errors][index])
+      error_messages << ["Import of the file #{file} failed with errors:", @import_result[:errors][index]].join("\n")
+    end
+    error_messages
+  end
+
+  def add_error(error)
+    @errors << error
   end
 
 end
