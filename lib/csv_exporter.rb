@@ -62,6 +62,20 @@ class CsvExporter
     end
   end
 
+  def self.send_import_report(send_email)
+    if send_email
+      if @import_result.success.length > 0
+        @import_result.success.map!{|success| "Import of the file #{success} done."}
+        BackendMailer.send_import_feedback('Successful Import', @import_result.success.join("\n"))
+      end
+      if @import_result[:error_file].length > 0
+        get_error_message_and_upload
+        BackendMailer.send_import_feedback('Import CSV failed',error_messages.join("\n"))
+      end
+    end
+  end
+
+
   def self.import(file, validation_only = false)
     begin
       result = import_file(file, validation_only)
@@ -86,6 +100,7 @@ class CsvExporter
     source_path = "#{Rails.root.to_s}/private/upload"
     path_and_name = "#{source_path}/csv/tmp_mraba/DTAUS#{Time.now.strftime('%Y%m%d_%H%M%S')}"
 
+    FileUtils.mkdir_p "#{source_path}/csv"
     FileUtils.mkdir_p "#{source_path}/csv/tmp_mraba"
 
     @dtaus = Mraba::Transaction.define_dtaus('RS', 8888888888, 99999999, 'Credit collection')
@@ -94,7 +109,7 @@ class CsvExporter
 
     import_rows.each do |index, row|
       next if index.blank?
-      break unless validate_import_row(row)
+      break unless validate_import_row?(row)
       errors, dtaus = import_file_row_with_error_handling(row, validation_only, @errors, @dtaus)
       line += 1
       break unless @errors.empty?
@@ -138,12 +153,10 @@ class CsvExporter
     [errors, dtaus]
   end
 
-  def self.validate_import_row(row)
-    errors = []
-    @errors << "#{row['ACTIVITY_ID']}: UMSATZ_KEY #{row['UMSATZ_KEY']} is not allowed" unless %w(10 16).include?row['UMSATZ_KEY']
-    @errors += errors
-
-    errors.size == 0
+  def self.validate_import_row?(row)
+    return if %w[10 16].include?row['UMSATZ_KEY']
+    add_error("#{row['ACTIVITY_ID']}: UMSATZ_KEY #{row['UMSATZ_KEY']} is not allowed")
+    false
   end
 
   def self.transaction_type(row)
@@ -162,7 +175,7 @@ class CsvExporter
     sender = Account.find_by_account_no(row['SENDER_KONTO'])
 
     if sender.nil?
-      @errors << "#{row['ACTIVITY_ID']}: Account #{row['SENDER_KONTO']} not found"
+      add_error("#{row['ACTIVITY_ID']}: Account #{row['SENDER_KONTO']} not found")
     end
 
     sender
